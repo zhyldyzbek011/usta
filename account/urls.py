@@ -5,7 +5,7 @@ from account import views
 from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
-router.register('posts', views.PostViewSet)
+router.register('cards', views.Worker_cardViewSet)
 
 urlpatterns = [
     path('users/', views.UserListView.as_view()),

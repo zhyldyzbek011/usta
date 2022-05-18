@@ -1,14 +1,12 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
 
-from account.models import Category, Post, PostImages, Comment
+from account.models import Category, Worker_cardImages, Comment, Worker_card
 
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(min_length=4, write_only=True,
-                                     required=True)
-    password2 = serializers.CharField(min_length=4, write_only=True,
-                                      required=True)
+    password = serializers.CharField(min_length=4, write_only=True, required=True)
+    password2 = serializers.CharField(min_length=4, write_only=True, required=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
 
@@ -57,24 +55,24 @@ class CategorySerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class PostImageSerializer(serializers.ModelSerializer):
+class Worker_cardImageSerializer(serializers.ModelSerializer):
     class Meta:
-        model = PostImages
+        model = Worker_cardImages
         exclude = ('id',)
 
 
-class PostSerializer(serializers.ModelSerializer):
+class Worker_cardSerializer(serializers.ModelSerializer):
     owner = serializers.ReadOnlyField(
         source='owner.username'
     )
-    images = PostImageSerializer(many=True, read_only=False, required=False)
+    images = Worker_cardImageSerializer(many=True, read_only=False, required=False)
     comments = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
 
     class Meta:
-        model = Post
+        model = Worker_card
         fields = (
-            'id', 'title', 'body',
-            'owner', 'category', 'preview', 'images', 'comments',
+            'id', 'first_name', 'last_name', 'body',
+            'owner', 'category', 'phone_number', 'images', 'comments',
         )
 
     def create(self, validated_data):
@@ -82,17 +80,17 @@ class PostSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         print('FILES', request.FILES)
         images_data = request.FILES
-        created_post = Post.objects.create(**validated_data)
-        print(created_post)
-        print('work', images_data.getlist('images'))
-        images_objects = [PostImages(post=created_post,
+        created_card = Worker_card.objects.create(**validated_data)
+        # print(created_card)
+        # print('work', images_data.getlist('images'))
+        images_objects = [Worker_cardImages(post=created_card,
                                      image=image) for image in images_data.getlist('images')]
-        PostImages.objects.bulk_create(images_objects)
-        return created_post
+        Worker_cardImages.objects.bulk_create(images_objects)
+        return created_card
 
-    def is_liked(self, post):
+    def is_liked(self, card):
         user = self.context.get('request').user
-        return user.liked.filter(post=post).exists()
+        return user.liked.filter(card=card).exists()
 
     def to_representation(self, instance):
         representation = super().to_representation(instance)
@@ -110,4 +108,4 @@ class CommentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Comment
-        fields = ('id', 'body', 'owner', 'post')
+        fields = ('id', 'body', 'owner', 'card')
