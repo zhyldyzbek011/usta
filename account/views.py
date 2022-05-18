@@ -1,6 +1,7 @@
 
 from rest_auth.views import LogoutView
 from rest_framework import generics, permissions
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -9,12 +10,23 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter
 from rest_framework import status
 from django.contrib.auth.models import User
-
+from .permissions import IsOwnerOrReadOnly, IsAdminOrReadOnly
 from account import serializers
 from account.serializers import Worker_cardSerializer
 from account.models import Worker_card, Category, Comment, Likes
 from account.permissions import IsAuthor
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status, permissions
+from rest_framework_simplejwt.views import TokenObtainPairView
+from django.contrib.auth import get_user_model
+from django.contrib.auth.views import LogoutView
+from .send_email import send_confirmation_email, send_reset_password
 
+from . import serializers
+
+
+User = get_user_model()
 
 class StandartPaginationClass(PageNumberPagination):
     page_size = 2
@@ -22,24 +34,73 @@ class StandartPaginationClass(PageNumberPagination):
     max_page_size = 1000
 
 
-class UserRegistrationView(generics.CreateAPIView):
-    queryset = User.objects.all()
-    permission_classes = (permissions.AllowAny,)
-    serializer_class = serializers.RegisterSerializer
+class RegistrationApiView(APIView):
+    def post(self, request):
+        serializer = serializers.RegisterSerializer(data=request.data)
+        if serializer.is_valid(raise_exception=True):
+            user = serializer.save()
+            if user:
+                send_confirmation_email(user)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(status=status.HTTP_400_BAD_REQUEST)
 
 
-class CustomLogoutView(LogoutView):
-    permission_classes = (permissions.IsAuthenticated,)
+class ActivationView(APIView):
+    def get(self, request, activation_code):
+        try:
+            user = User.objects.get(activation_code=activation_code)
+            user.is_active = True
+            user.activation_code = ''
+            user.save()
+            return Response({'msg':'Successfully activated!'}, status=status.HTTP_200_OK)
+        except User.DoesNotExist:
+            return Response({'msg':'Link expired!'}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class UserListView(generics.ListAPIView):
-    queryset = User.objects.all()
-    serializer_class = serializers.UserSerializer
+class LoginApiView(TokenObtainPairView):
+    serializer_class = serializers.LoginSerializer
 
 
-class UserDetailView(generics.RetrieveAPIView):
-    queryset = User.objects.all()
-    serializer_class = serializers.UserDetailSerializer
+class NewPasswordVew(APIView):
+   def post(self, request):
+       serializer = serializers.CreateNewPasswordSerializer(data=request.data)
+       if serializer.is_valid(raise_exception=True):
+
+
+           serializer.save()
+           return Response('Password changed')
+
+
+class ResetPasswordView(APIView):
+
+    def post(self, request):
+        serializer = serializers.PasswordResetSerializer(data=request.data)
+        if serializer.is_valid(raise_exception=True):
+
+            user = User.objects.get(email=serializer.data.get('email'))
+            user.create_activation_code()
+            user.save()
+            send_reset_password(user)
+            return Response('Chek your email')
+
+#
+# class UserRegistrationView(generics.CreateAPIView):
+#     queryset = User.objects.all()
+#     serializer_class = serializers.RegisterSerializer
+#
+#
+# class CustomLogoutView(LogoutView):
+#     permission_classes = (permissions.IsAuthenticated,)
+#
+#
+# class UserListView(generics.ListAPIView):
+#     queryset = User.objects.all()
+#     serializer_class = serializers.UserSerializer
+#
+#
+# class UserDetailView(generics.RetrieveAPIView):
+#     queryset = User.objects.all()
+#     serializer_class = serializers.UserDetailSerializer
 
 
 # class PostCreateView(generics.CreateAPIView):
@@ -74,12 +135,13 @@ class Worker_cardViewSet(ModelViewSet):
     queryset = Worker_card.objects.all()
     serializer_class = serializers.Worker_cardSerializer
     pagination_class = StandartPaginationClass
-    # permission_classes = (IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly)
+    permission_classes = (IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly, )
     filter_backends = (DjangoFilterBackend, SearchFilter)
     filterset_fields = ('category', 'owner',)
-    search_fields = ('title',)
+    search_fields = ('firstname','location', 'category',)
 
     def perform_create(self, serializer):
+        # print(serializer.data)
         return serializer.save(owner=self.request.user)
 
     @action(['GET'], detail=True)
@@ -89,7 +151,7 @@ class Worker_cardViewSet(ModelViewSet):
         serializer = serializers.CommentSerializer(comments, many=True)
         return Response(serializer.data)
 
-    @action(['CARD'], detail=True)
+    @action(['POST'], detail=True)
     def add_to_liked(self, request, pk):
         card = self.get_object()
         if request.user.liked.filter(card=card).exists():
@@ -97,7 +159,7 @@ class Worker_cardViewSet(ModelViewSet):
         Likes.objects.create(card=card, user=request.user)
         return Response('Вы поставили лайк', status=status.HTTP_201_CREATED)
 
-    @action(['CARD'], detail=True)
+    @action(['POST'], detail=True)
     def remove_from_liked(self, request, pk):
         card = self.get_object()
         if not request.user.liked.filter(card=card).exists():
@@ -105,6 +167,14 @@ class Worker_cardViewSet(ModelViewSet):
         request.user.liked.filter(card=card).delete()
         Likes.objects.create(card=card, user=request.user)
         return Response('Ваш лайк удален', status=status.HTTP_204_NO_CONTENT)
+
+    # @action(['POST'], detail=True)
+    # def add_to_rating(self, request, pk):
+    #     card = self.get_object()
+    #     if request.user.ratinged.filter(card=card).exists():
+    #         return Response('Вы уже лайкали этот пост', status=status.HTTP_400_BAD_REQUEST)
+    #     .objects.create(card=card, user=request.user)
+    #     return Response('Вы поставили лайк', status=status.HTTP_201_CREATED)
 
 
 class CommentListCreateView(generics.ListCreateAPIView):
@@ -120,7 +190,7 @@ class CommentListCreateView(generics.ListCreateAPIView):
 
 class CommentDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Comment.objects.all()
-    serializers_class = serializers.CommentSerializer
+    serializer_class = serializers.CommentSerializer
     permission_classes = (permissions.IsAuthenticatedOrReadOnly, IsAuthor,)
 
     def perform_create(self, serializer):
@@ -171,3 +241,6 @@ class CommentDetailView(generics.RetrieveUpdateDestroyAPIView):
 class CategoryView(generics.ListAPIView):
     queryset = Category.objects.all()
     serializer_class = serializers.CategorySerializer
+
+
+
